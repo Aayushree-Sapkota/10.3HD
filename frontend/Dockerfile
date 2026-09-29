@@ -22,8 +22,7 @@ ENV VITE_ENROLLMENT_SERVICE_URL=${VITE_ENROLLMENT_SERVICE_URL}
 
 RUN npm run build
 
-#FROM nginx:1.27-alpine
-FROM nginx:1-alpine-slim
+FROM nginx:1.27-alpine
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
