@@ -244,6 +244,68 @@ jobs:
 
           echo "Traffic switch verified successfully."
 
+      - name: Post-deployment validation with automatic rollback
+        run: |
+          echo "=========================================="
+          echo "Post-Deployment Production Validation"
+          echo "New slot: ${{ steps.slots.outputs.inactive_slot }}"
+          echo "Rollback slot: ${{ steps.slots.outputs.active_slot }}"
+          echo "=========================================="
+
+          # Wait briefly for the Service endpoints to update
+          sleep 10
+
+          PROD_IP=$(kubectl get service frontend \
+            -n production \
+            -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+          echo "Production IP: $PROD_IP"
+          echo "Testing newly activated production deployment..."
+
+          if curl --fail \
+                  --silent \
+                  --show-error \
+                  --retry 5 \
+                  --retry-delay 5 \
+                  --max-time 10 \
+                  "http://${PROD_IP}"; then
+
+            echo "=========================================="
+            echo "Production validation PASSED"
+            echo "New deployment remains active."
+            echo "=========================================="
+
+          else
+
+            echo "=========================================="
+            echo "Production validation FAILED"
+            echo "Starting automatic rollback..."
+            echo "=========================================="
+
+            kubectl patch service frontend \
+              -n production \
+              -p '{"spec":{"selector":{"app":"frontend","slot":"${{ steps.slots.outputs.active_slot }}"}}}'
+
+            echo "Production traffic restored to:"
+            echo "${{ steps.slots.outputs.active_slot }}"
+
+            sleep 10
+
+            ROLLBACK_SLOT=$(kubectl get service frontend \
+              -n production \
+              -o jsonpath='{.spec.selector.slot}')
+
+            if [ "$ROLLBACK_SLOT" != "${{ steps.slots.outputs.active_slot }}" ]; then
+              echo "CRITICAL: Rollback selector verification failed."
+              exit 1
+            fi
+
+            echo "Rollback selector verified."
+
+            # Fail the workflow intentionally because the deployment failed.
+            exit 1
+          fi
+
       - name: Show production resources
         run: |
           kubectl get pods -n production
