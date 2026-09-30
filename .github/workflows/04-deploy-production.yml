@@ -217,6 +217,33 @@ jobs:
                  --max-time 10 \
                  http://frontend-candidate
 
+      - name: Switch production traffic to candidate
+        run: |
+          echo "Switching production traffic..."
+          echo "From: ${{ steps.slots.outputs.active_slot }}"
+          echo "To:   ${{ steps.slots.outputs.inactive_slot }}"
+
+          kubectl patch service frontend \
+            -n production \
+            -p '{"spec":{"selector":{"app":"frontend","slot":"${{ steps.slots.outputs.inactive_slot }}"}}}'
+
+          echo "Production traffic switched successfully."
+
+      - name: Verify production traffic switch
+        run: |
+          NEW_ACTIVE_SLOT=$(kubectl get service frontend \
+            -n production \
+            -o jsonpath='{.spec.selector.slot}')
+
+          echo "Production service is pointing to: $NEW_ACTIVE_SLOT"
+
+          if [ "$NEW_ACTIVE_SLOT" != "${{ steps.slots.outputs.inactive_slot }}" ]; then
+            echo "ERROR: Production traffic switch failed."
+            exit 1
+          fi
+
+          echo "Traffic switch verified successfully."
+
       - name: Show production resources
         run: |
           kubectl get pods -n production
