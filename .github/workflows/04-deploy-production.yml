@@ -93,9 +93,59 @@ jobs:
           kubectl apply \
             -f kubernetes/production/
 
-      - name: Update frontend image
+      #Implement active/inactive detection
+
+      - name: Determine active and inactive slots
+        id: slots
         run: |
-          kubectl set image deployment/frontend \
+          ACTIVE_SLOT=$(kubectl get service frontend \
+            -n production \
+            -o jsonpath='{.spec.selector.slot}')
+
+          if [ "$ACTIVE_SLOT" = "blue" ]; then
+            INACTIVE_SLOT="green"
+          else
+            INACTIVE_SLOT="blue"
+          fi
+
+          echo "Active slot: $ACTIVE_SLOT"
+          echo "Inactive slot: $INACTIVE_SLOT"
+
+          echo "active_slot=$ACTIVE_SLOT" >> "$GITHUB_OUTPUT"
+          echo "inactive_slot=$INACTIVE_SLOT" >> "$GITHUB_OUTPUT"
+
+      - name: Bootstrap Blue slot if required
+        run: |
+          CURRENT_BLUE_IMAGE=$(kubectl get deployment frontend-blue \
+            -n production \
+            -o jsonpath='{.spec.template.spec.containers[0].image}')
+
+          echo "Current Blue image: $CURRENT_BLUE_IMAGE"
+
+          if [ "$CURRENT_BLUE_IMAGE" = "placeholder" ]; then
+            echo "First production deployment detected."
+            echo "Bootstrapping Blue with tested image..."
+
+            kubectl set image deployment/frontend-blue \
+              frontend=${{ vars.ACR_LOGIN_SERVER }}/koalatech-frontend:${{ env.IMAGE_TAG }} \
+              -n production
+
+            kubectl rollout status deployment/frontend-blue \
+              -n production \
+              --timeout=300s
+
+            echo "Blue bootstrap completed."
+          else
+            echo "Existing production deployment detected."
+            echo "Bootstrap not required."
+          fi
+        
+
+      # Update the latest image to inactive slot    
+      - name: Deploy new frontend to inactive slot
+        run: |
+          kubectl set image \
+            deployment/frontend-${{ steps.slots.outputs.inactive_slot }} \
             frontend=${{ vars.ACR_LOGIN_SERVER }}/koalatech-frontend:${{ env.IMAGE_TAG }} \
             -n production
 
@@ -129,9 +179,11 @@ jobs:
             enrollment-service=${{ vars.ACR_LOGIN_SERVER }}/koalatech-enrollment-service:${{ env.IMAGE_TAG }} \
             -n production
 
-      - name: Wait for frontend rollout
+      # rollout new deployment to inactive slots
+      - name: Wait for candidate frontend rollout
         run: |
-          kubectl rollout status deployment/frontend \
+          kubectl rollout status \
+            deployment/frontend-${{ steps.slots.outputs.inactive_slot }} \
             -n production \
             --timeout=300s
 
@@ -164,6 +216,121 @@ jobs:
           kubectl rollout status deployment/enrollment-service \
             -n production \
             --timeout=300s
+
+      - name: Point candidate service to inactive slot
+        run: |
+          kubectl patch service frontend-candidate \
+            -n production \
+            -p '{"spec":{"selector":{"app":"frontend","slot":"${{ steps.slots.outputs.inactive_slot }}"}}}'
+
+          echo "Candidate service now points to ${{ steps.slots.outputs.inactive_slot }}"
+      
+      - name: Smoke test candidate deployment
+        run: |
+          echo "Testing candidate slot: ${{ steps.slots.outputs.inactive_slot }}"
+          kubectl run frontend-smoke-test \
+            --namespace production \
+            --image=curlimages/curl:latest \
+            --restart=Never \
+            --rm \
+            --attach \
+            --command -- \
+            curl --fail \
+                 --silent \
+                 --show-error \
+                 --retry 5 \
+                 --retry-delay 5 \
+                 --max-time 10 \
+                 http://frontend-candidate
+
+      - name: Switch production traffic to candidate
+        run: |
+          echo "Switching production traffic..."
+          echo "From: ${{ steps.slots.outputs.active_slot }}"
+          echo "To:   ${{ steps.slots.outputs.inactive_slot }}"
+
+          kubectl patch service frontend \
+            -n production \
+            -p '{"spec":{"selector":{"app":"frontend","slot":"${{ steps.slots.outputs.inactive_slot }}"}}}'
+
+          echo "Production traffic switched successfully."
+
+      - name: Verify production traffic switch
+        run: |
+          NEW_ACTIVE_SLOT=$(kubectl get service frontend \
+            -n production \
+            -o jsonpath='{.spec.selector.slot}')
+
+          echo "Production service is pointing to: $NEW_ACTIVE_SLOT"
+
+          if [ "$NEW_ACTIVE_SLOT" != "${{ steps.slots.outputs.inactive_slot }}" ]; then
+            echo "ERROR: Production traffic switch failed."
+            exit 1
+          fi
+
+          echo "Traffic switch verified successfully."
+
+      - name: Post-deployment validation with automatic rollback
+        run: |
+          echo "=========================================="
+          echo "Post-Deployment Production Validation"
+          echo "New slot: ${{ steps.slots.outputs.inactive_slot }}"
+          echo "Rollback slot: ${{ steps.slots.outputs.active_slot }}"
+          echo "=========================================="
+
+          # Wait briefly for the Service endpoints to update
+          sleep 10
+
+          PROD_IP=$(kubectl get service frontend \
+            -n production \
+            -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+          echo "Production IP: $PROD_IP"
+          echo "Testing newly activated production deployment..."
+
+          if curl --fail \
+                  --silent \
+                  --show-error \
+                  --retry 5 \
+                  --retry-delay 5 \
+                  --max-time 10 \
+                  "http://${PROD_IP}"; then
+
+            echo "=========================================="
+            echo "Production validation PASSED"
+            echo "New deployment remains active."
+            echo "=========================================="
+
+          else
+
+            echo "=========================================="
+            echo "Production validation FAILED"
+            echo "Starting automatic rollback..."
+            echo "=========================================="
+
+            kubectl patch service frontend \
+              -n production \
+              -p '{"spec":{"selector":{"app":"frontend","slot":"${{ steps.slots.outputs.active_slot }}"}}}'
+
+            echo "Production traffic restored to:"
+            echo "${{ steps.slots.outputs.active_slot }}"
+
+            sleep 10
+
+            ROLLBACK_SLOT=$(kubectl get service frontend \
+              -n production \
+              -o jsonpath='{.spec.selector.slot}')
+
+            if [ "$ROLLBACK_SLOT" != "${{ steps.slots.outputs.active_slot }}" ]; then
+              echo "CRITICAL: Rollback selector verification failed."
+              exit 1
+            fi
+
+            echo "Rollback selector verified."
+
+            # Fail the workflow intentionally because the deployment failed.
+            exit 1
+          fi
 
       - name: Show production resources
         run: |
