@@ -93,9 +93,32 @@ jobs:
           kubectl apply \
             -f kubernetes/production/
 
-      - name: Update frontend image
+      #Implement active/inactive detection
+
+      - name: Determine active and inactive slots
+        id: slots
         run: |
-          kubectl set image deployment/frontend \
+          ACTIVE_SLOT=$(kubectl get service frontend \
+            -n production \
+            -o jsonpath='{.spec.selector.slot}')
+
+          if [ "$ACTIVE_SLOT" = "blue" ]; then
+            INACTIVE_SLOT="green"
+          else
+            INACTIVE_SLOT="blue"
+          fi
+
+          echo "Active slot: $ACTIVE_SLOT"
+          echo "Inactive slot: $INACTIVE_SLOT"
+
+          echo "active_slot=$ACTIVE_SLOT" >> "$GITHUB_OUTPUT"
+          echo "inactive_slot=$INACTIVE_SLOT" >> "$GITHUB_OUTPUT"
+
+      # Update the latest image to inactive slot    
+      - name: Deploy new frontend to inactive slot
+        run: |
+          kubectl set image \
+            deployment/frontend-${{ steps.slots.outputs.inactive_slot }} \
             frontend=${{ vars.ACR_LOGIN_SERVER }}/koalatech-frontend:${{ env.IMAGE_TAG }} \
             -n production
 
@@ -129,9 +152,11 @@ jobs:
             enrollment-service=${{ vars.ACR_LOGIN_SERVER }}/koalatech-enrollment-service:${{ env.IMAGE_TAG }} \
             -n production
 
-      - name: Wait for frontend rollout
+      # rollout new deployment to inactive slots
+      - name: Wait for candidate frontend rollout
         run: |
-          kubectl rollout status deployment/frontend \
+          kubectl rollout status \
+            deployment/frontend-${{ steps.slots.outputs.inactive_slot }} \
             -n production \
             --timeout=300s
 
