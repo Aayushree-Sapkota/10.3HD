@@ -88,10 +88,32 @@ jobs:
             --dry-run=client \
             -o yaml | kubectl apply -f -
 
+      - name: Capture current production slot
+        id: current
+        run: |
+          if kubectl get service frontend -n production >/dev/null 2>&1; then
+            ACTIVE_SLOT=$(kubectl get service frontend \
+              -n production \
+              -o jsonpath='{.spec.selector.slot}')
+
+            echo "Existing production slot: $ACTIVE_SLOT"
+            echo "slot=$ACTIVE_SLOT" >> "$GITHUB_OUTPUT"
+          else
+            echo "First production deployment."
+            echo "slot=blue" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Apply Kubernetes manifests
         run: |
           kubectl apply \
             -f kubernetes/production/
+
+
+      - name: Preserve production traffic slot
+        run: |
+          kubectl patch service frontend \
+            -n production \
+            -p '{"spec":{"selector":{"app":"frontend","slot":"${{ steps.current.outputs.slot }}"}}}'
 
       #Implement active/inactive detection
 
