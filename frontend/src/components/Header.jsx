@@ -43,10 +43,10 @@ const Header = () => {
               fontWeight: 600,
             }}
           >
-            KoalaTech University - CD Pipeline (Task 9.3C)
+            KoalaTech University - 10.3 HD Blue-Green Deployment
           </Typography>
           <Chip
-            label="Continuous Deployment v2.0"
+            label="HD Task"
             color="secondary"
             size="small"
             sx={{ fontWeight: 700, color: "white" }}
