@@ -113,6 +113,32 @@ jobs:
 
           echo "active_slot=$ACTIVE_SLOT" >> "$GITHUB_OUTPUT"
           echo "inactive_slot=$INACTIVE_SLOT" >> "$GITHUB_OUTPUT"
+
+      - name: Bootstrap Blue slot if required
+        run: |
+          CURRENT_BLUE_IMAGE=$(kubectl get deployment frontend-blue \
+            -n production \
+            -o jsonpath='{.spec.template.spec.containers[0].image}')
+
+          echo "Current Blue image: $CURRENT_BLUE_IMAGE"
+
+          if [ "$CURRENT_BLUE_IMAGE" = "placeholder" ]; then
+            echo "First production deployment detected."
+            echo "Bootstrapping Blue with tested image..."
+
+            kubectl set image deployment/frontend-blue \
+              frontend=${{ vars.ACR_LOGIN_SERVER }}/koalatech-frontend:${{ env.IMAGE_TAG }} \
+              -n production
+
+            kubectl rollout status deployment/frontend-blue \
+              -n production \
+              --timeout=300s
+
+            echo "Blue bootstrap completed."
+          else
+            echo "Existing production deployment detected."
+            echo "Bootstrap not required."
+          fi
         
 
       # Update the latest image to inactive slot    
