@@ -113,6 +113,7 @@ jobs:
 
           echo "active_slot=$ACTIVE_SLOT" >> "$GITHUB_OUTPUT"
           echo "inactive_slot=$INACTIVE_SLOT" >> "$GITHUB_OUTPUT"
+        
 
       # Update the latest image to inactive slot    
       - name: Deploy new frontend to inactive slot
@@ -189,6 +190,32 @@ jobs:
           kubectl rollout status deployment/enrollment-service \
             -n production \
             --timeout=300s
+
+      - name: Point candidate service to inactive slot
+        run: |
+          kubectl patch service frontend-candidate \
+            -n production \
+            -p '{"spec":{"selector":{"app":"frontend","slot":"${{ steps.slots.outputs.inactive_slot }}"}}}'
+
+          echo "Candidate service now points to ${{ steps.slots.outputs.inactive_slot }}"
+      
+      - name: Smoke test candidate deployment
+        run: |
+          echo "Testing candidate slot: ${{ steps.slots.outputs.inactive_slot }}"
+          kubectl run frontend-smoke-test \
+            --namespace production \
+            --image=curlimages/curl:latest \
+            --restart=Never \
+            --rm \
+            --attach \
+            --command -- \
+            curl --fail \
+                 --silent \
+                 --show-error \
+                 --retry 5 \
+                 --retry-delay 5 \
+                 --max-time 10 \
+                 http://frontend-candidate
 
       - name: Show production resources
         run: |
