@@ -43,7 +43,7 @@ const Header = () => {
               fontWeight: 600,
             }}
           >
-            KoalaTech University - 10.3 HD Blue-Green Deployment Demonstration
+            KoalaTech University - 10.3 HD Blue-Green Deployment Demonstration!
           </Typography>
           <Chip
             label="HD Task"
