@@ -263,7 +263,7 @@ jobs:
                  --retry 5 \
                  --retry-delay 5 \
                  --max-time 10 \
-                 http://frontend-candidate/intentional-failure-test
+                 http://frontend-candidate:9999
 
       - name: Switch production traffic to candidate
         run: |
