@@ -268,7 +268,7 @@ jobs:
                  --retry 5 \
                  --retry-delay 5 \
                  --max-time 10 \
-                 http://frontend-candidate:9999
+                 http://frontend-candidate
 
       - name: Switch production traffic to candidate
         run: |
