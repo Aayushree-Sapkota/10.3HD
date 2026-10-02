@@ -17,6 +17,11 @@ on:
         description: "Tested image SHA to deploy"
         required: false
         type: string
+      simulate_failure:
+        description: "Simulate post-deployment failure to test rollback"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   deploy-production:
@@ -263,7 +268,7 @@ jobs:
                  --retry 5 \
                  --retry-delay 5 \
                  --max-time 10 \
-                 http://frontend-candidate:9999
+                 http://frontend-candidate
 
       - name: Switch production traffic to candidate
         run: |
@@ -276,6 +281,20 @@ jobs:
             -p '{"spec":{"selector":{"app":"frontend","slot":"${{ steps.slots.outputs.inactive_slot }}"}}}'
 
           echo "Production traffic switched successfully."
+      
+      - name: Inject post-switch failure
+        if: ${{ inputs.simulate_failure == true }}
+        run: |
+          echo "CONTROLLED FAILURE TEST"
+          echo "Scaling the newly active slot to zero..."
+
+          kubectl scale deployment \
+            frontend-${{ steps.slots.outputs.inactive_slot }} \
+            --replicas=0 \
+            -n production
+          sleep 10
+
+          echo "Failure injected into ${{ steps.slots.outputs.inactive_slot }}"
 
       - name: Verify production traffic switch
         run: |
